@@ -11,6 +11,7 @@ void executeProgram(char* name);
 void handleInterrupt21(int ax, int bx, int cx, int dx);
 void terminate();
 void handleTimerInterrupt(int segment, int sp);
+void killProcess();
 
 
 // global variables from step 2
@@ -48,14 +49,16 @@ void main()
 //	makeInterrupt21();  //crashed the program
 
 
+	makeInterrupt21();
+
 	interrupt(0x21, 4, "shell", 0, 0);
 
-	makeInterrupt21();
+//	makeInterrupt21();
 
 	makeTimerInterrupt();
 
         //call shell
- //       interrupt(0x21, 4, "shell", 0, 0);
+//        interrupt(0x21, 4, "shell", 0, 0);
 
 //	makeTimerInterrupt();
 
@@ -88,51 +91,55 @@ void printChar(char c)
 
 void readString(char* line)
 {
-	char buffer[];
-//	char true;
 	int index = 0;
-	char readingString = interrupt(0x16,0 ,0 ,0 ,0);
-	while(1)
+	char i = 0x0;
+
+	while(i != 0xd)
 	{
-		//if not enter or backspace
-		if(readingString != 0xd && readingString != 0x8)
+
+		
+		//backspace - tentative attempt 2!
+		/*if(i == 0x08)
 		{
-			//store it
-			buffer[index] = readingString;
-			index++;
-			//write to screen
-			interrupt(0x10, 0xe * 0x100 + readingString, 0, 0, 0);
-		}
-		//if backspace entered
-		else if(readingString == 0x8)
-		{
-			// move one character back
-			index--;
-			//
-		//	interrupt(0x10, 0xe*256+0x08, 0, 0, 0);
-		//	interrupt(0x10, 0xe*256 + ' ', 0, 0, 0);
-		//	interrupt(0x10, 0xe*256+0x08, 0, 0, 0);
-			printChar(0x08);
-			printChar(0x20);
-			printChar(0x08);
-		}
-	/*	else
-	//	{
-			// reading from user input
-	//		index = interrupt(0x16, 0, 0, 0, 0);
-			//pointer to char array/char
-	//		*(line + index) = i;
-			// printing user's input to the screen
-	//		interrupt(0x10, 0xe * 0x100 + i, 0, 0, 0);
-	//		index++;
-		} */
+			if(index != 0)
+			{
+				index--;
+				//interrupt instead?
+				printChar(0x08);
+				printChar(0x20);
+				printChar(0x08);
+			}
+		}*/
+
+		// reading from user input
+		i = interrupt(0x16, 0, 0, 0, 0);
+		//pointer to char array/char
+		*(line + index) = i;
+		// printing user's input to the screen
+		interrupt(0x10, 0xe * 0x100 + i, 0, 0, 0);
+		index++;
 	}
+	
+
 	printChar(0xa);
 	line[index] = 0xa;
 	printChar(0x0);
 	index++;
 	line[index] = 0x0;
+
+/*	if(i == 0xd)
+	{
+		index++;	
+		//adding line feed to end of the array and printing it
+		*(line + index) = 0xa;
+		interrupt(0x10, 0xe * 256 + index, 0, 0, 0);
+		index++;
+		//adding the end of string character to the end of the array and printing it
+		*(line + index) = 0x0;
+		interrupt(0x10, 0xe * 256 + index, 0, 0, 0);
+	}*/
 }
+
 
 void readSector(char* buffer, int sector)
 {
@@ -277,8 +284,8 @@ void readFile(char* filename, char* buffer2, int* sectorsRead)
 //function to execute a program by first reading the file name of the program, loading it into memory, and then executing it
 void executeProgram(char* name)
 {
-/*  	// --- OLD executeProgram ---
-
+  	// --- OLD executeProgram ---
+/*
 	//buffer to hold the file name
 	char bufferForFile[13312];
 	int index;
@@ -300,9 +307,7 @@ void executeProgram(char* name)
 
 //	printChar('*');
 	launchProgram(0x2000);
-
 */
-
 
 	//buffer to hold the file name
 	char buffer[13312];
@@ -312,16 +317,24 @@ void executeProgram(char* name)
 	int i;
 	int j;
 	int segment;
+	int sectorRead;
 
- 	char dataseg;
-	dataseg = setKernelDataSegment();
+ 	int dataseg;
+//	dataseg = setKernelDataSegment();
 //	currentProcess = -1;
-	restoreDataSegment(dataseg);
+//	restoreDataSegment(dataseg);
 
+//	printChar('1');
 	//reading file into buffer
-        readFile(name, buffer);
+        readFile(name, buffer, &sectorRead);
 
-	setKernelDataSegment();
+	 if( sectorRead == 0)
+                return;
+
+//	printChar('2');
+//	printChar(buffer[0]);
+
+	dataseg = setKernelDataSegment();
 
 	//inside processActive array, looking for a free entry
 	for(i = 0; i < 8; i++)
@@ -330,24 +343,28 @@ void executeProgram(char* name)
 			break;
 	}
 
-	restoreDataSegment();
+	restoreDataSegment(dataseg);
+//	printChar('0' + i);
+
 	//with segment: take the entry [i], add 2, multiply by 0x1000
 	segment = 0x1000 * (i+2);
 
 	//copying the buffer into segment with putInMemory
-	for(j = 0; j < 13312; j++);
+	for(j = 0; j < 13312; j++)
 	{
 		putInMemory(segment, j, buffer[j]);
+//		if(j < 10)
+//			printChar(buffer[j]);
 	}
 
 	// calling initializeProgram
 	initializeProgram(segment);
 
-	setKernelDataSegment();
+	dataseg = setKernelDataSegment();
 	//set processActive to 1 & processStackPointer to 0xff00
 	processActive[i] = 1;
 	processStackPointer[i] = 0xff00;
-	restoreDataSegment();
+	restoreDataSegment(dataseg);
 
 }
 
@@ -389,7 +406,11 @@ void handleInterrupt21(int ax, int bx, int cx, int dx)
 	{
 		terminate();
 	}
-	else if(ax >= 6)
+	else if (ax == 9)
+	{
+		killProcess(bx);
+	}
+	else if(ax == 6)
 	{
 		printString("Invalid value for AX. No function available! Please try again.");
 	}
@@ -422,46 +443,80 @@ void terminate()
 */
 }
 
+void killProcess()
+{
+	int i;
+	int dataseg;
+
+	dataseg = setKernelDataSegment();
+	for(i = 0; i < 8; i++)
+        {
+                processActive[i] = 0;
+                processStackPointer[i] = 0xff00;
+        }
+	restoreDataSegment(dataseg);
+}
+
 
 void handleTimerInterrupt(int segment, int sp)
 {
-	printString("tic");
-	returnFromTimer(segment, sp);
 
-/*
 	int activeRun = 0;
 	int i = 0;
 
+	int dataseg;
+
+//	printString("tic");
+//	returnFromTimer(segment, sp);
+
+	dataseg = setKernelDataSegment();	
 
 	// saving sp parameter into processStackPointer indexed by currentProcess
 	// only do this if segment is not -1 
-	if(segment!= -1)
+	if(currentProcess != -1)
 	{
-		setKernelDataSegment();
+		//setKernelDataSegment();
 		processStackPointer[currentProcess] = sp;
-		restoreDataSegment();
+		//restoreDataSegment();
 	
-		setKernelDataSegment();
-	        currentProcess++;
-	        restoreDataSegment();
 
 	}
-	//finding in activeRun, loop through 8 currentProcess
-	setKernelDataSegment();
-	while(i < 8 && activeRun == 0)
+
+	//restoreDataSegment(dataseg);
+
+
+	// code given inorder to see number of active processes
+		// placed after calling setKernelDataSegment()
+	for(i=0; i<8; i++)
+        {
+                putInMemory(0xb800,60*2+i*4,i+0x30);
+                if(processActive[i]==1)
+                        putInMemory(0xb800,60*2+i*4+1,0x20);
+                else
+                        putInMemory(0xb800,60*2+i*4+1,0);
+        }
+
+	//dataseg = setKernelDataSegment();
+
+
+	currentProcess = currentProcess + 1; 
+	i = 0;
+ 	//finding in activeRun, loop through 8 currentProcess
+	while( i < 8 && activeRun == 0)
 	{
 		// checking if processActive entry for currentProcess is 1
 		if(processActive[currentProcess] == 1)
 		{
+//			printChar(currentProcess + '0');
 			// setting segment: step 4
-			setKernelDataSegment();
+			//setKernelDataSegment();
 			segment = (2 + currentProcess) * 0x1000;
-			restoreDataSegment();
+			//restoreDataSegment();
 
 			// setting sp: step 4
-			setKernelDataSegment();
+			//setKernelDataSegment();
 			sp = processStackPointer[currentProcess];	
-			restoreDataSegment();
+			//restoreDataSegment();
 			
 		  	activeRun = 1;
 		}
@@ -480,9 +535,10 @@ void handleTimerInterrupt(int segment, int sp)
 		i++;
 	}
 
-	restoreDataSegment();
+
+	restoreDataSegment(dataseg);
 	returnFromTimer(segment, sp);
-*/
+
 }
 
 
